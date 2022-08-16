@@ -1,0 +1,415 @@
+---
+title: "Hectorville Cricket Club Player Reviews"
+subtitle: "Season `r substring(params$selected_season,4,5)`/`r substring(params$selected_season,7,8)`"
+author: "Simon Thwaites"
+date: "`r format(Sys.time(), '%d %B, %Y')`" # use system time and make human readable,e.g., 04 July, 2022
+# output: pdf_document
+output: html_document
+params:
+  review_years: NA
+  selected_season: NA
+  nResponses: NA
+  season_data: NA
+  allYears: NA
+  groupByGrade: FALSE
+  levels_react: NA
+  wc.max.words: NA
+  wc.min.freq: NA
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE, error=FALSE)
+
+library(kableExtra)
+
+options(dplyr.summarise.inform = FALSE)
+
+## create plotting function for summary plots
+summaryPlots <- function(allYears_df, allYears_df_selection, allYears_df_newName, summaryPlotYearsSelection, summaryGroupByGrade) {
+  # summaryPlotYearsSelection is a reacctive from outside the module so must be passed directly as they cannpt access reactives outside of the module namespace
+  
+  
+  
+  plotData <- select(allYears_df, allYears_df_selection, `Grade most played`, Season) %>%
+    filter(Season %in% summaryPlotYearsSelection)
+  # filter(Season %in% summaryPlotYearsSelection())
+  
+  colnames(plotData) <- c(allYears_df_newName, "Grade", "Season") # assign new col names
+  
+  plotData <- plotData %>%
+    mutate(Season = factor(Season), # make Season and Grade factors for plotting
+           Grade = factor(Grade))
+  
+  if (summaryGroupByGrade == TRUE) {
+    
+    df_mean <- plotData %>%
+      group_by(Grade, Season) %>%
+      summarize(average = round(mean(.data[[allYears_df_newName]]), 2) ) %>%
+      ungroup()
+    
+    p <- plotData %>%
+      ggplot(aes(x = Season, y = .data[[allYears_df_newName]], fill = Grade)) +
+      geom_boxplot(alpha = 0.5) +
+      
+      geom_point(data = df_mean,
+                 mapping = aes(x = Season, y = average),
+                 color="red",
+                 position = position_dodge2(width = 0.7,
+                                            preserve = "single"),
+                 show.legend = FALSE,
+                 na.rm=TRUE) +
+      geom_line(data = df_mean,
+                mapping = aes(x = Season, y = average, group=Grade, color = Grade),
+                position = position_dodge2(width = 0.7,
+                                           preserve = "single"),
+                show.legend = FALSE,
+                na.rm=TRUE)
+    
+    # p
+    
+    # html output only
+    ggplotly(p) %>%
+      layout(boxmode = "group")
+    
+  } else {
+    df_mean <- plotData %>%
+      group_by(Season) %>%
+      summarize(average = round(mean(.data[[allYears_df_newName]]), 2) ) %>%
+      ungroup()
+    
+    p <- plotData %>%
+      ggplot(aes(x = Season, y = .data[[allYears_df_newName]])) +
+      geom_boxplot(alpha = 0.5) +
+      
+      geom_point(data = df_mean,
+                 mapping = aes(x = Season, y = average),
+                 color="red",
+                 show.legend = FALSE) +
+      geom_line(data = df_mean,
+                mapping = aes(x = Season, y = average, group = 1), # want to connect all the data points and we can specify that using group=1
+                color = "red",
+                show.legend = FALSE)
+    
+    
+    p <- ggplotly(p) # plotly for html output only
+    
+    p
+  }
+}
+
+newNames <- c("teamPerformance",                                       
+              "yourPerformance",                                                                    
+              "training",                                                                             
+              "presentationNights",                                                      
+              "selectionNights",                                                         
+              "clubFunctions",                                                                        
+              "gamedayPrep")
+
+# reactive dataframe with only the quantitative metrics
+df_quant_seasonData <- params$season_data[, 3:9] %>% 
+  `colnames<-` (newNames) %>%        # special piping with setting colnames
+  tibble::rowid_to_column("ID") %>%  # add id column
+  pivot_longer(!ID, names_to = "ScoreName", values_to = "ScoreValue")  # make long
+
+plotData <- params$season_data
+yesCount <- plotData %>% 
+  filter(`Do you plan on playing next season?` == "Yes") %>% 
+  nrow()
+```
+
+## Executive Summary
+
+This report details the HCC Player Reviews for Season `r substring(params$selected_season,4,5)`/`r substring(params$selected_season,7,8)`. There were `r params$nResponses` overall respondents, with `r yesCount` indicating they will play next year. This report contains: a summary of the current season, the seasonal trends, and all anonymised text responses for the current season. Overall, there appears to be a general upward trend in all metrics except for ratings of individual performance.  
+
+This report is not optimised for mobile viewing, but you'll deal with it. If you accidentally change any plot windows when navigating/zooming on the page, you can reset the plot window by hitting the "autoscale" button towards the top right of each plot (looks like an X but with arrow heads).
+
+Click on certain plot elements to interrogate the data further, or turn on/off groupings through the plot legends if you want to isolate certain groupings (note this will likely shag some of the grouping alignments as I haven't yet allowed for this to be dealt with nicely).
+
+[Github repo for those programmatically inclined.](https://github.com/simon-thwaites/HCC-Reviews_distribution)
+
+### Current Season
+
+#### Grade most played?
+
+```{r grade, out.width='80%'}
+## grade most played
+p <- plotData %>% 
+  plot_ly(labels = ~`Grade most played`, type = 'pie', domain = list(row = 0, column = 0))
+p
+```
+
+#### Playing next season?
+
+```{r playing, out.width='80%'}
+p <- plotData %>% 
+  plot_ly(labels = ~`Do you plan on playing next season?`, type = 'pie', domain = list(row = 0, column = 1)) 
+p
+```
+
+#### Season Summary
+
+```{r violin}
+plotData <- df_quant_seasonData #%>%
+# filter(ScoreName %in% input$varSelection)
+# make order of Name an ordered factor to stop ggplot reordering the xData
+plotData$ScoreName <- ordered(plotData$ScoreName, levels = params$levels_react)
+
+# change the display names of the metrics
+plotData <- plotData %>% 
+  mutate(ScoreName = recode(ScoreName, 
+                            "teamPerformance" = "Team Performance",                                       
+                            "yourPerformance" = "Your Performance",
+                            "training" = "Training",
+                            "presentationNights" = "Presentation Nights",
+                            "selectionNights" = "Selection Nights",
+                            "clubFunctions" = "Club Functions",
+                            "gamedayPrep" = "Gameday Preparation"))
+
+p <- plotData %>%
+  plot_ly(
+    x = ~ScoreName,
+    y = ~ScoreValue,
+    split = ~ScoreName,
+    type = 'violin',
+    box = list(visible = T),
+    opacity = 0.75,
+    points = 'all',
+    jitter = 0.2,
+    meanline = list(visible = T)
+  ) %>%
+  layout(
+    xaxis = list(
+      title = "Metric"
+    ),
+    yaxis = list(
+      title = "Score",
+      zeroline = T,
+      range = c(-1,11)
+    )
+  ) %>%
+  hide_legend()
+p
+```
+
+### Seasonal trends
+
+#### **Team Performance**
+
+```{r trend1}
+summaryPlots(params$allYears, "Team performance (from your grade most played):", "TeamPerformance", params$review_years, params$groupByGrade)
+```
+
+#### **Your Performance**
+
+```{r trend2}
+summaryPlots(params$allYears, "Your performance:", "yourPerformance", params$review_years, params$groupByGrade)
+```
+
+#### **Training**
+
+```{r trend3}
+summaryPlots(params$allYears, "Training:", "training", params$review_years, params$groupByGrade)
+```
+
+#### **Presentation Nights (Saturdays)**
+
+```{r trend4}
+summaryPlots(params$allYears, "Presentation nights (Saturdays):", "presentationNights", params$review_years, params$groupByGrade)
+```
+
+#### **Selection Nights (Thursdays)**
+
+```{r trend5}
+summaryPlots(params$allYears, "Selection nights (Thursdays):", "selectionNights", params$review_years, params$groupByGrade)
+```
+
+#### **Club Functions**
+
+```{r trend6}
+summaryPlots(params$allYears, "Club Functions", "clubFunctions", params$review_years, params$groupByGrade)
+```
+
+#### **Game Day Preparation**
+
+```{r trend7}
+summaryPlots(params$allYears, "Game day preparation", "gamedayPrep", params$review_years, params$groupByGrade)
+```
+
+### Text Responses
+
+#### **What were the standout positives from the season?**
+
+```{r text1, out.width="70%"}
+text.colnames <- c("text.positives",
+                   "text.negatives",
+                   "text.training",
+                   "text.presentations",
+                   "text.selections",
+                   "text.gamedayprep",
+                   "text.funcideas",
+                   "text.comments",
+                   "text.moment")
+
+text.data <- params$season_data %>% 
+  rename(text.positives = `What were the standout positives from the season?`,
+         text.negatives = `What were the standout negatives from the season?`,
+         text.training = `How could we improve training?`,
+         text.presentations = `How could we improve presentation nights?`,
+         text.selections = `How could we improve selection nights?`,
+         text.gamedayprep = `How could we improve game day preparation?`,
+         text.funcideas = `Do you have any ideas for Club functions?`,
+         text.comments = `Any other comments?`,
+         text.moment = `What was your moment of the season?`) %>% 
+  select(all_of(text.colnames)) %>% 
+  # Note: Using an external vector in selections is ambiguous.
+  # Use `all_of(text.colnames)` instead of `text.colnames` to silence this message.
+  # See <https://tidyselect.r-lib.org/reference/faq-external-vector.html>.
+  replace_contraction() %>% 
+  { gsub("[’]", "", .) }
+# With pipe your data are passed as a first argument to the next function, 
+# so if you want to use it somewhere else you need to wrap the next line in {} and use . as a data "marker".
+
+wordcloud_rep <- repeatable(wordcloud)
+
+word.cloud.scale <- c(3,0.5)
+
+words <- createTDM(text.data, 1)
+wordcloud_rep(names(words), words,  
+              scale = word.cloud.scale,
+              min.freq = params$wc.min.freq, max.words= params$wc.max.words,
+              colors = brewer.pal(8, "Dark2"))
+```
+
+```{r table1}
+t.data <- data.frame(params$season_data$`What were the standout positives from the season?`)
+colnames(t.data) <- "Responses"
+kable(t.data) %>% kable_styling()
+```
+
+#### **What were the standout negatives from the season?**
+
+```{r text2, out.width="70%"}
+words <- createTDM(text.data, 2)
+wordcloud_rep(names(words), words,  
+              scale = word.cloud.scale,
+              min.freq = params$wc.min.freq, max.words= params$wc.max.words,
+              colors = brewer.pal(8, "Dark2"))
+```
+
+```{r table2}
+t.data <- data.frame(params$season_data$`What were the standout negatives from the season?`)
+colnames(t.data) <- "Responses"
+kable(t.data) %>% kable_styling()
+```
+
+#### **How could we improve training?**
+
+```{r text3, out.width="70%"}
+words <- createTDM(text.data, 3)
+wordcloud_rep(names(words), words,  
+              scale = word.cloud.scale,
+              min.freq = params$wc.min.freq, max.words= params$wc.max.words,
+              colors = brewer.pal(8, "Dark2"))
+```
+
+```{r table3}
+t.data <- data.frame(params$season_data$`How could we improve training?`)
+colnames(t.data) <- "Responses"
+kable(t.data) %>% kable_styling()
+```
+
+#### **How could we improve presentation nights?**
+
+```{r text4, out.width="70%"}
+words <- createTDM(text.data, 4)
+wordcloud_rep(names(words), words,  
+              scale = word.cloud.scale,
+              min.freq = params$wc.min.freq, max.words= params$wc.max.words,
+              colors = brewer.pal(8, "Dark2"))
+```
+
+```{r table4}
+t.data <- data.frame(params$season_data$`How could we improve presentation nights?`)
+colnames(t.data) <- "Responses"
+kable(t.data) %>% kable_styling()
+```
+
+#### **How could we improve selection nights?**
+
+```{r text5, out.width="70%"}
+words <- createTDM(text.data, 5)
+wordcloud_rep(names(words), words,  
+              scale = word.cloud.scale,
+              min.freq = params$wc.min.freq, max.words= params$wc.max.words,
+              colors = brewer.pal(8, "Dark2"))
+```
+
+```{r table5}
+t.data <- data.frame(params$season_data$`How could we improve selection nights?`)
+colnames(t.data) <- "Responses"
+kable(t.data) %>% kable_styling()
+```
+
+#### **How could we improve game day preparation?**
+
+```{r text6, out.width="70%"}
+words <- createTDM(text.data, 6)
+wordcloud_rep(names(words), words,  
+              scale = word.cloud.scale,
+              min.freq = params$wc.min.freq, max.words= params$wc.max.words,
+              colors = brewer.pal(8, "Dark2"))
+```
+
+```{r table6}
+t.data <- data.frame(params$season_data$`How could we improve game day preparation?`)
+colnames(t.data) <- "Responses"
+kable(t.data) %>% kable_styling()
+```
+
+#### **Do you have any ideas for Club functions?**
+
+```{r text7, out.width="70%"}
+words <- createTDM(text.data, 7)
+wordcloud_rep(names(words), words,  
+              scale = word.cloud.scale,
+              min.freq = params$wc.min.freq, max.words= params$wc.max.words,
+              colors = brewer.pal(8, "Dark2"))
+```
+
+```{r table7}
+t.data <- data.frame(params$season_data$`Do you have any ideas for Club functions?`)
+colnames(t.data) <- "Responses"
+kable(t.data) %>% kable_styling()
+```
+
+#### **Any other comments?**
+
+```{r text8, out.width="70%"}
+words <- createTDM(text.data, 8)
+wordcloud_rep(names(words), words,  
+              scale = word.cloud.scale,
+              min.freq = params$wc.min.freq, max.words= params$wc.max.words,
+              colors = brewer.pal(8, "Dark2"))
+```
+
+```{r table8}
+t.data <- data.frame(params$season_data$`Any other comments?`)
+colnames(t.data) <- "Responses"
+kable(t.data) %>% kable_styling()
+```
+
+#### **What was your moment of the season?**
+
+```{r text9, out.width="70%"}
+words <- createTDM(text.data, 9)
+wordcloud_rep(names(words), words,  
+              scale = word.cloud.scale,
+              min.freq = params$wc.min.freq, max.words= params$wc.max.words,
+              colors = brewer.pal(8, "Dark2"))
+```
+
+```{r table9}
+t.data <- data.frame(params$season_data$`What was your moment of the season?`)
+colnames(t.data) <- "Responses"
+kable(t.data) %>% kable_styling()
+```
